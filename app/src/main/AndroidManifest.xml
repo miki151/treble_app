@@ -7,13 +7,11 @@
 
 
     <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
-    <uses-permission android:name="android.permission.DIAGNOSTIC" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
@@ -23,66 +21,14 @@
         tools:ignore="GoogleAppIndexingWarning">
 
         <uses-library android:name="android.hidl.manager.V1_0" android:required="false" />
-        <uses-library android:name="vendor.huawei.hardware.biometrics.fingerprint.V2_1" android:required="false"/>
-        <uses-library android:name="vendor.huawei.hardware.tp.V1_0" android:required="false"/>
-        <uses-library android:name="vendor.qti.hardware.radio.am.V1_0" android:required="false"/>
-        <uses-library android:name="vendor.qti.qcril.am.V1_0" android:required="false"/>
 
         <service android:name=".EntryService" />
-        <service android:name=".NubiaAutoFanControlService" />
-
-        <service
-            android:name=".NubiaGameModeTilesService"
-            android:exported="true"
-            android:icon="@drawable/tile_game_mode"
-            android:label="Game Mode"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:enabled="false">
-            <meta-data
-                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
-                android:value="true" />
-
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-        <service
-            android:name=".NubiaFanControlTilesService"
-            android:exported="true"
-            android:icon="@drawable/tile_fan_control"
-            android:label="Fan Control"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:enabled="false">
-            <meta-data
-                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
-                android:value="true" />
-
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-        <service
-            android:name=".NubiaShoulderBtnTilesService"
-            android:exported="true"
-            android:icon="@drawable/tile_game_mode"
-            android:label="Shoulder triggers"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:enabled="false">
-            <meta-data
-                android:name="android.service.quicksettings.TOGGLEABLE_TILE"
-                android:value="true" />
-
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
 
         <receiver android:name=".Starter"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
-                <action android:name="me.phh.update" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
@@ -109,32 +55,6 @@
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".UpdaterActivity"
-            android:label="@string/title_activity_updater"
-            android:theme="@style/Theme.TrebleApp"
-            android:launchMode="singleTop"
-            android:exported="true">
-            <intent-filter android:priority="1">
-                <action android:name="android.settings.SYSTEM_UPDATE_SETTINGS" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name=".REPL"
-            android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS"
-            />
-
-        <activity
-            android:name=".DesktopInput"
-            android:launchMode="singleTask"
-            android:theme="@android:style/Theme.Material.Dialog" >
-        </activity>
-
-        <activity android:name=".DebugSensors" />
 
     </application>
 
