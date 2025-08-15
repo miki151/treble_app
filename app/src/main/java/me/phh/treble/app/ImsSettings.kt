@@ -165,7 +165,7 @@ class ImsSettingsFragment : SettingsFragment() {
                     val sessionId = pi.createSession(PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL))
                     val session = pi.openSession(sessionId)
 
-                    Misc.safeSetprop("persist.vendor.vilte_support", "0")
+                    Props.safeSetprop("persist.vendor.vilte_support", "0")
 
                     session.openWrite("hello", 0, -1).use { output ->
                         FileInputStream(path).use { input ->
