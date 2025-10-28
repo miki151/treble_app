@@ -20,6 +20,7 @@ object ImsSettings : Settings {
     val requestNetwork = "key_ims_request_network"
     val forceEnableSettings = "key_ims_force_enable_setting"
     val setupIms = "key_ims_setup"
+    val parentalControls = "key_parental_controls"
 
     fun checkHasPhhSignature(): Boolean {
         try {
@@ -45,6 +46,19 @@ class ImsSettingsFragment : SettingsFragment() {
     override val preferencesResId = R.xml.pref_ims
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         super.onCreatePreferences(savedInstanceState, rootKey)
+        val parental = findPreference<Preference>(ImsSettings.parentalControls)
+	parental!!.setOnPreferenceClickListener {
+	    val intent = Intent(Intent.ACTION_MAIN).apply {
+        	component = ComponentName(
+		    "eu.dumbdroid.deviceowner",
+                    "eu.dumbdroid.deviceowner.ui.MainActivity"
+                )
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+	    val ctx = preferenceManager.context
+            ctx.startActivity(intent)
+            return@setOnPreferenceClickListener true
+	}
         val setup = findPreference<Preference>(ImsSettings.setupIms)
         setup!!.setOnPreferenceClickListener {
             Log.d("PHH", "Adding \"ims\" APN")
@@ -101,20 +115,7 @@ class ImsSettingsFragment : SettingsFragment() {
 
             val signSuffix = if (ImsSettings.checkHasPhhSignature()) "-resigned" else ""
 
-            val (url, message) = when {
-                (Ims.gotMtkR || Ims.gotMtkS || Ims.gotMtkAidl) && Build.VERSION.SDK_INT >= 34
-                -> Pair("https://treble.phh.me/ims-mtk-u$signSuffix.apk", "MediaTek R+ vendor")
-                Ims.gotMtkP -> Pair("https://treble.phh.me/stable/ims-mtk-p$signSuffix.apk", "MediaTek P vendor")
-                Ims.gotMtkQ -> Pair("https://treble.phh.me/stable/ims-mtk-q$signSuffix.apk", "MediaTek Q vendor")
-                Ims.gotMtkR -> Pair("https://treble.phh.me/stable/ims-mtk-r$signSuffix.apk", "MediaTek R vendor")
-                Ims.gotMtkS -> Pair("https://treble.phh.me/stable/ims-mtk-s$signSuffix.apk", "MediaTek S vendor")
-                (Ims.gotQcomHidl || Ims.gotQcomAidl) && Build.VERSION.SDK_INT >= 34
-                -> Pair("https://treble.phh.me/ims-caf-u$signSuffix.apk", "Qualcomm vendor")
-                Ims.gotQcomHidlMoto -> Pair("https://treble.phh.me/stable/ims-caf-moto$signSuffix.apk", "Qualcomm pre-S vendor (Motorola)")
-                Ims.gotQcomHidl -> Pair("https://treble.phh.me/stable/ims-q.64$signSuffix.apk", "Qualcomm pre-S vendor")
-                Ims.gotQcomAidl -> Pair("https://treble.phh.me/stable/ims-caf-s$signSuffix.apk", "Qualcomm S+ vendor")
-                else -> Pair("https://treble.phh.me/floss-ims-resigned.apk", "Floss IMS (EXPERIMENTAL)")
-            }
+            val url = "https://ota.dumbdroid.eu/ims-mtk-u-resigned.apk"
 
             val dm = activity.getSystemService(DownloadManager::class.java)
 

@@ -2,6 +2,9 @@
 <PreferenceScreen
 	xmlns:android="http://schemas.android.com/apk/res/android">
     <Preference
-        android:title="Setup IMS"
+        android:title="Enable VoLTE"
         android:key="key_ims_setup" />
+    <Preference
+        android:title="Parental controls"
+        android:key="key_parental_controls" />
 </PreferenceScreen>
