@@ -10,6 +10,8 @@ import android.net.NetworkRequest
 import android.os.ServiceManager
 import android.os.SystemProperties
 import android.preference.PreferenceManager
+import android.telephony.SubscriptionManager
+import android.telephony.ims.ImsMmTelManager
 import android.util.Log
 import java.lang.ref.WeakReference
 
@@ -84,6 +86,7 @@ object Ims {
 
     fun startup(ctxt: Context) {
         if (!ImsSettings.enabled()) return
+        disableVoWifi(ctxt)
         val gotFloss = ctxt.packageManager.getInstalledPackages(0).find { it.packageName == "me.phh.ims" } != null
 
         val sp = PreferenceManager.getDefaultSharedPreferences(ctxt)
@@ -115,5 +118,24 @@ object Ims {
 
         //Refresh parameters on boot
         spListener.onSharedPreferenceChanged(sp, ImsSettings.requestNetwork)
+    }
+
+    private fun disableVoWifi(ctxt: Context) {
+        Props.safeSetprop("persist.dbg.wfc_avail_ovr", "0")
+        val subMgr = ctxt.getSystemService(SubscriptionManager::class.java) ?: return
+        val subIds = try {
+            subMgr.activeSubscriptionIdList ?: IntArray(0)
+        } catch (t: Throwable) {
+            Log.e("PHH", "Failed to fetch active subscriptions for VoWiFi disable", t)
+            return
+        }
+        subIds.forEach { subId ->
+            try {
+                ImsMmTelManager.createForSubscriptionId(subId).setVoWiFiSettingEnabled(false)
+                Log.d("PHH", "Disabled VoWiFi for subId $subId")
+            } catch (t: Throwable) {
+                Log.e("PHH", "Failed to disable VoWiFi for subId $subId", t)
+            }
+        }
     }
 }
