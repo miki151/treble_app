@@ -17,7 +17,14 @@ import java.lang.ref.WeakReference
 
 @SuppressLint("StaticFieldLeak")
 object Ims {
+    const val IMS_PACKAGE = "me.phh.ims"
+    private const val IMS_NETWORK_TIMEOUT_MS = 120_000
+
     lateinit var ctxt: WeakReference<Context>
+    private var prefsListenerRegistered = false
+    private val imsNetworkRequest = NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+        .build()
 
     val networkListener = object: ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -25,6 +32,17 @@ object Ims {
         }
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             Log.i("PHH", "Received info about network $network, got $networkCapabilities")
+        }
+        override fun onUnavailable() {
+            Log.w("PHH", "IMS network request timed out, retrying")
+            val c = ctxt.get() ?: return
+            val sp = PreferenceManager.getDefaultSharedPreferences(c)
+            if (!sp.getBoolean(ImsSettings.requestNetwork, false)) {
+                registeredNetwork = false
+                return
+            }
+            val cm = c.getSystemService(ConnectivityManager::class.java) ?: return
+            requestImsNetwork(cm)
         }
     }
 
@@ -37,11 +55,10 @@ object Ims {
             ImsSettings.requestNetwork -> {
                 val value = sp.getBoolean(key, false)
                 if(value) {
-                    val nwRequest = NetworkRequest.Builder()
-                            .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-                            .build()
-                    cm.requestNetwork(nwRequest, networkListener)
-                    registeredNetwork = true
+                    if (!registeredNetwork) {
+                        requestImsNetwork(cm)
+                        registeredNetwork = true
+                    }
                 } else {
                     if(registeredNetwork) {
                         cm.unregisterNetworkCallback(networkListener)
@@ -86,15 +103,30 @@ object Ims {
 
     fun startup(ctxt: Context) {
         if (!ImsSettings.enabled()) return
-        disableVoWifi(ctxt)
-        val gotFloss = ctxt.packageManager.getInstalledPackages(0).find { it.packageName == "me.phh.ims" } != null
+        val appContext = ctxt.applicationContext
+        this.ctxt = WeakReference(appContext)
 
-        val sp = PreferenceManager.getDefaultSharedPreferences(ctxt)
-        sp.registerOnSharedPreferenceChangeListener(spListener)
+        val sp = PreferenceManager.getDefaultSharedPreferences(appContext)
+        if (!prefsListenerRegistered) {
+            sp.registerOnSharedPreferenceChangeListener(spListener)
+            prefsListenerRegistered = true
+        }
 
-        this.ctxt = WeakReference(ctxt.applicationContext)
+        disableVoWifi(appContext)
+        refreshOverlays(appContext)
 
-        val allOverlays = listOf("me.phh.treble.overlay.mtkims_telephony", "me.phh.treble.overlay.cafims_telephony", "me.phh.treble.overlay.hwims_telephony")
+        // Refresh parameters on boot (and after IMS install).
+        spListener.onSharedPreferenceChanged(sp, ImsSettings.requestNetwork)
+        spListener.onSharedPreferenceChanged(sp, ImsSettings.forceEnableSettings)
+    }
+
+    private fun refreshOverlays(ctxt: Context) {
+        val gotFloss = ctxt.packageManager.getInstalledPackages(0).find { it.packageName == IMS_PACKAGE } != null
+        val allOverlays = listOf(
+            "me.phh.treble.overlay.mtkims_telephony",
+            "me.phh.treble.overlay.cafims_telephony",
+            "me.phh.treble.overlay.hwims_telephony"
+        )
         val selectOverlay = when {
             gotFloss -> "me.phh.treble.overlay.flossims_telephony"
             gotMtkP || gotMtkQ || gotMtkR || gotMtkS || gotMtkAidl -> "me.phh.treble.overlay.mtkims_telephony"
@@ -109,15 +141,16 @@ object Ims {
         } else {
             Props.safeSetprop("persist.sys.phh.ims.floss", "false")
         }
-        if(selectOverlay != null) {
+        if (selectOverlay != null) {
             allOverlays
-                    .filter { it != selectOverlay }
-                    .forEach { OverlayUtil.setOverlayEnabled(it, false) }
+                .filter { it != selectOverlay }
+                .forEach { OverlayUtil.setOverlayEnabled(it, false) }
             OverlayUtil.setOverlayEnabled(selectOverlay, true)
         }
+    }
 
-        //Refresh parameters on boot
-        spListener.onSharedPreferenceChanged(sp, ImsSettings.requestNetwork)
+    private fun requestImsNetwork(cm: ConnectivityManager) {
+        cm.requestNetwork(imsNetworkRequest, networkListener, IMS_NETWORK_TIMEOUT_MS)
     }
 
     private fun disableVoWifi(ctxt: Context) {

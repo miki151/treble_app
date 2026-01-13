@@ -5,6 +5,11 @@
     android:persistent="true"
     android:sharedUserId="android.uid.system">
 
+    <queries>
+        <package android:name="com.mediatek.ims" />
+        <package android:name="me.phh.ims" />
+    </queries>
+
 
     <uses-permission android:name="android.permission.INTERACT_ACROSS_USERS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -23,6 +28,10 @@
         <uses-library android:name="android.hidl.manager.V1_0" android:required="false" />
 
         <service android:name=".EntryService" />
+
+        <receiver
+            android:name=".ImsInstallReceiver"
+            android:exported="false" />
 
         <receiver android:name=".Starter"
             android:exported="true">

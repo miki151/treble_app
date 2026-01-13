@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.os.UserHandle
+import android.os.UserManager
 import android.util.Log
 import kotlin.concurrent.thread
 
@@ -21,6 +22,12 @@ class EntryService : Service() {
         thread {
             try {
                 Ims.startup(this)
+                val userManager = getSystemService(UserManager::class.java)
+                if (userManager?.isUserUnlocked != false) {
+                    ImsSettings.setupIms(this, userInitiated = false)
+                } else {
+                    Log.d("PHH", "User locked; skipping IMS auto-setup")
+                }
             } catch (t: Throwable) {
                 Log.e("PHH", "Caught", t)
             }
