@@ -1,6 +1,4 @@
 <resources>
     <string name="app_name">Dumbdroid settings</string>
     <string name="title_activity_settings">Dumbdroid settings</string>
-    <string name="title_activity_top_level">Dumbdroid settings</string>
-    <string name="desc_activity_top_level">VoLTE, parental controls</string>
 </resources>
