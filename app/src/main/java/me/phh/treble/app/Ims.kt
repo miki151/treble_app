@@ -69,7 +69,7 @@ object Ims {
             ImsSettings.forceEnableSettings -> {
                 val value = if(sp.getBoolean(key, false)) "1" else "0"
                 Props.safeSetprop("persist.dbg.volte_avail_ovr", value)
-                Props.safeSetprop("persist.dbg.wfc_avail_ovr", value)
+//                Props.safeSetprop("persist.dbg.wfc_avail_ovr", value)
                 Props.safeSetprop("persist.dbg.allow_ims_off", value)
             }
         }
