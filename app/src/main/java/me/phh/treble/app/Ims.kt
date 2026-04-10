@@ -7,6 +7,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.TelephonyNetworkSpecifier
+import android.os.SystemClock
 import android.os.ServiceManager
 import android.os.SystemProperties
 import android.preference.PreferenceManager
@@ -19,19 +21,40 @@ import java.lang.ref.WeakReference
 object Ims {
     const val IMS_PACKAGE = "me.phh.ims"
     private const val IMS_NETWORK_TIMEOUT_MS = 120_000
+    private const val IMS_REFRESH_COOLDOWN_MS = 30_000L
 
     lateinit var ctxt: WeakReference<Context>
     private var prefsListenerRegistered = false
-    private val imsNetworkRequest = NetworkRequest.Builder()
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
-        .build()
+    private var lastRefreshElapsed = 0L
+    private var wasSuspended = false
+    private var requestedSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID
 
     val networkListener = object: ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             Log.i("PHH", "Network $network is available!")
         }
+        override fun onLost(network: Network) {
+            Log.w("PHH", "IMS network $network lost")
+            val c = ctxt.get() ?: return
+            val sp = PreferenceManager.getDefaultSharedPreferences(c)
+            if (!sp.getBoolean(ImsSettings.requestNetwork, false)) {
+                registeredNetwork = false
+                wasSuspended = false
+                requestedSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID
+                return
+            }
+            val cm = c.getSystemService(ConnectivityManager::class.java) ?: return
+            refreshImsNetworkRequest(cm, "network lost", force = true)
+        }
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
             Log.i("PHH", "Received info about network $network, got $networkCapabilities")
+            val suspended = !networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED)
+            if (wasSuspended && !suspended) {
+                val c = ctxt.get() ?: return
+                val cm = c.getSystemService(ConnectivityManager::class.java) ?: return
+                refreshImsNetworkRequest(cm, "suspension cleared")
+            }
+            wasSuspended = suspended
         }
         override fun onUnavailable() {
             Log.w("PHH", "IMS network request timed out, retrying")
@@ -42,14 +65,14 @@ object Ims {
                 return
             }
             val cm = c.getSystemService(ConnectivityManager::class.java) ?: return
-            requestImsNetwork(cm)
+            refreshImsNetworkRequest(cm, "timeout", force = true)
         }
     }
 
     var registeredNetwork = false
     val spListener = SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
         val c = ctxt.get() ?: return@OnSharedPreferenceChangeListener
-        val cm = c.getSystemService(ConnectivityManager::class.java)
+        val cm = c.getSystemService(ConnectivityManager::class.java) ?: return@OnSharedPreferenceChangeListener
 
         when(key) {
             ImsSettings.requestNetwork -> {
@@ -58,11 +81,18 @@ object Ims {
                     if (!registeredNetwork) {
                         requestImsNetwork(cm)
                         registeredNetwork = true
+                    } else {
+                        val subId = getTargetSubId(c)
+                        if (subId != requestedSubId) {
+                            refreshImsNetworkRequest(cm, "target subId changed", force = true)
+                        }
                     }
                 } else {
                     if(registeredNetwork) {
-                        cm.unregisterNetworkCallback(networkListener)
+                        unregisterImsNetworkRequest(cm)
                         registeredNetwork = false
+                        wasSuspended = false
+                        requestedSubId = SubscriptionManager.INVALID_SUBSCRIPTION_ID
                     }
                 }
             }
@@ -149,8 +179,61 @@ object Ims {
         }
     }
 
+    private fun getTargetSubId(c: Context): Int {
+        val defaultSubId = SubscriptionManager.getDefaultDataSubscriptionId()
+        if (SubscriptionManager.isValidSubscriptionId(defaultSubId)) return defaultSubId
+
+        val subMgr = c.getSystemService(SubscriptionManager::class.java) ?: return SubscriptionManager.INVALID_SUBSCRIPTION_ID
+        val activeSubs = try {
+            subMgr.activeSubscriptionIdList
+        } catch (t: Throwable) {
+            Log.e("PHH", "Failed to read active subscriptions", t)
+            IntArray(0)
+        }
+        return activeSubs.firstOrNull() ?: SubscriptionManager.INVALID_SUBSCRIPTION_ID
+    }
+
+    private fun buildImsNetworkRequest(c: Context): NetworkRequest {
+        val builder = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_IMS)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
+        val subId = getTargetSubId(c)
+        if (SubscriptionManager.isValidSubscriptionId(subId)) {
+            builder.setNetworkSpecifier(
+                TelephonyNetworkSpecifier.Builder()
+                    .setSubscriptionId(subId)
+                    .build()
+            )
+        }
+        requestedSubId = subId
+        return builder.build()
+    }
+
+    private fun unregisterImsNetworkRequest(cm: ConnectivityManager) {
+        try {
+            cm.unregisterNetworkCallback(networkListener)
+        } catch (t: Throwable) {
+            Log.d("PHH", "IMS network callback was not registered", t)
+        }
+    }
+
+    private fun refreshImsNetworkRequest(cm: ConnectivityManager, reason: String, force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastRefreshElapsed < IMS_REFRESH_COOLDOWN_MS) {
+            Log.d("PHH", "Skipping IMS request refresh ($reason), cooldown active")
+            return
+        }
+        unregisterImsNetworkRequest(cm)
+        requestImsNetwork(cm)
+        registeredNetwork = true
+        Log.i("PHH", "Refreshed IMS network request ($reason)")
+    }
+
     private fun requestImsNetwork(cm: ConnectivityManager) {
+        val c = ctxt.get() ?: return
+        val imsNetworkRequest = buildImsNetworkRequest(c)
         cm.requestNetwork(imsNetworkRequest, networkListener, IMS_NETWORK_TIMEOUT_MS)
+        lastRefreshElapsed = SystemClock.elapsedRealtime()
     }
 
     private fun disableVoWifi(ctxt: Context) {

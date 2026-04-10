@@ -15,10 +15,23 @@ class EntryService : Service() {
         var service: EntryService? = null
     }
 
+    @Volatile
+    private var initStarted = false
+
     override fun onBind(intent: Intent): IBinder? = null
 
     override fun onCreate() {
         service = this
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startInitIfNeeded()
+        return START_STICKY
+    }
+
+    private fun startInitIfNeeded() {
+        if (initStarted) return
+        initStarted = true
         thread {
             try {
                 Ims.startup(this)
@@ -30,6 +43,7 @@ class EntryService : Service() {
                 }
             } catch (t: Throwable) {
                 Log.e("PHH", "Caught", t)
+                initStarted = false
             }
         }
     }
