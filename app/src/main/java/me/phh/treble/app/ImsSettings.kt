@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.os.SystemProperties
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.widget.Toast
@@ -20,6 +22,7 @@ import java.util.zip.ZipFile
 import kotlin.concurrent.thread
 
 object ImsSettings : Settings {
+    private const val STOCK_MTK_IMS_PROPERTY = "sys.phh.stock_mtk_ims"
     val requestNetwork = "key_ims_request_network"
     val forceEnableSettings = "key_ims_force_enable_setting"
     val setupIms = "key_ims_setup"
@@ -28,10 +31,17 @@ object ImsSettings : Settings {
     private const val imsApnName = "PHH IMS"
     private const val imsApkName = "ims_mtk_u_resigned.apk"
     private const val extraUserInitiated = "extra_ims_user_initiated"
-    private val imsPackageCandidates = listOf("com.mediatek.ims", Ims.IMS_PACKAGE)
+    private const val stockApnMigrationPrefix = "stock_mtk_ims_apn_migrated_"
+    private val imsPackageCandidates = listOf(Ims.IMS_PACKAGE)
+    private val carriersUri = Uri.parse("content://telephony/carriers")
+    private val currentCarriersUri = Uri.parse("content://telephony/carriers/current")
 
     @Volatile
     private var imsInstallInProgress = false
+
+    override fun enabled(): Boolean {
+        return !SystemProperties.getBoolean(STOCK_MTK_IMS_PROPERTY, false)
+    }
 
     fun checkHasPhhSignature(): Boolean {
         try {
@@ -51,6 +61,11 @@ object ImsSettings : Settings {
 
     fun setupIms(context: Context, userInitiated: Boolean) {
         val appContext = context.applicationContext
+        if (!enabled()) {
+            migrateStockImsApns(appContext)
+            Log.d("PHH", "TrebleApp IMS setup disabled by stock MTK IMS boot selection")
+            return
+        }
         if (imsInstallInProgress) {
             Log.d("PHH", "IMS install already in progress, skipping")
             if (userInitiated) {
@@ -72,38 +87,7 @@ object ImsSettings : Settings {
             val mcc = operator.substring(0, 3)
             val mnc = operator.substring(3, operator.length)
             Log.d("PHH", "Got mcc = $mcc and mnc = $mnc")
-
-            val cr = appContext.contentResolver
-            val cursor = cr.query(
-                Uri.parse("content://telephony/carriers/current"),
-                arrayOf("name", "type", "apn", "carrier_enabled", "edited"),
-                "name = ?",
-                arrayOf(imsApnName),
-                null
-            )
-            val apnExists = cursor?.use { it.moveToFirst() } ?: false
-            if (apnExists) {
-                Log.d("PHH", "$imsApnName APN for this provider is already here")
-            } else {
-                Log.d("PHH", "No APN called $imsApnName, adding our own")
-
-                val cv = ContentValues()
-                cv.put("name", imsApnName)
-                cv.put("apn", "ims")
-                cv.put("type", "ims")
-                cv.put("edited", "1")
-                cv.put("user_editable", "1")
-                cv.put("user_visible", "1")
-                cv.put("protocol", "IPV4V6")
-                cv.put("roaming_protocol", "IPV6")
-                cv.put("modem_cognitive", "1")
-                cv.put("numeric", operator)
-                cv.put("mcc", mcc)
-                cv.put("mnc", mnc)
-
-                val res = cr.insert(Uri.parse("content://telephony/carriers"), cv)
-                Log.d("PHH", "Insert APN returned $res")
-            }
+            ensureImsApn(appContext, operator, mcc, mnc)
         }
 
         Log.d("PHH", "MTK P radio = ${Ims.gotMtkP}")
@@ -217,6 +201,162 @@ object ImsSettings : Settings {
         }
     }
 
+    private fun ensureImsApn(context: Context, operator: String, mcc: String, mnc: String) {
+        val cr = context.contentResolver
+        val existingImsApns = mutableListOf<Pair<Long, String>>()
+        cr.query(
+            currentCarriersUri,
+            arrayOf("_id", "name", "type", "apn", "edited", "current"),
+            "numeric = ?",
+            arrayOf(operator),
+            null
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndex("_id")
+            val nameIndex = cursor.getColumnIndex("name")
+            val typeIndex = cursor.getColumnIndex("type")
+            while (cursor.moveToNext()) {
+                val type = cursor.getString(typeIndex) ?: continue
+                if (!containsApnType(type, "ims")) continue
+                val id = cursor.getLong(idIndex)
+                val name = cursor.getString(nameIndex) ?: ""
+                existingImsApns.add(id to name)
+            }
+        }
+
+        val phhApnIds = existingImsApns
+            .filter { it.second == imsApnName }
+            .map { it.first }
+        val hasCarrierImsApn = existingImsApns.any { it.second != imsApnName }
+
+        if (hasCarrierImsApn) {
+            if (phhApnIds.isNotEmpty()) {
+                var removedCount = 0
+                phhApnIds.forEach { id ->
+                    removedCount += cr.delete(carriersUri, "_id = ?", arrayOf(id.toString()))
+                }
+                Log.i(
+                    "PHH",
+                    "Carrier IMS APN already exists for $operator, removed $removedCount stale $imsApnName entries"
+                )
+            } else {
+                Log.d("PHH", "Carrier IMS APN already exists for $operator, skipping $imsApnName")
+            }
+            return
+        }
+
+        if (phhApnIds.isNotEmpty()) {
+            Log.d("PHH", "$imsApnName APN for this provider is already here")
+            return
+        }
+
+        Log.d("PHH", "No carrier IMS APN found, adding our own $imsApnName entry")
+        val cv = ContentValues()
+        cv.put("name", imsApnName)
+        cv.put("apn", "ims")
+        cv.put("type", "ims")
+        cv.put("edited", "1")
+        cv.put("user_editable", "1")
+        cv.put("user_visible", "1")
+        cv.put("carrier_enabled", "1")
+        cv.put("protocol", "IPV4V6")
+        cv.put("roaming_protocol", "IPV6")
+        cv.put("modem_cognitive", "1")
+        cv.put("numeric", operator)
+        cv.put("mcc", mcc)
+        cv.put("mnc", mnc)
+
+        val res = cr.insert(carriersUri, cv)
+        Log.d("PHH", "Insert APN returned $res")
+    }
+
+    private fun migrateStockImsApns(context: Context) {
+        val subscriptionManager = context.getSystemService(SubscriptionManager::class.java)
+            ?: return
+        val subscriptions = try {
+            subscriptionManager.activeSubscriptionInfoList.orEmpty()
+        } catch (t: Throwable) {
+            Log.e("PHH", "Failed to get subscriptions for stock IMS APN migration", t)
+            return
+        }
+        if (subscriptions.isEmpty()) return
+
+        val cr = context.contentResolver
+        val legacyOperators = queryLegacyImsOperators(context)
+        val preferences = PreferenceManager.getDefaultSharedPreferences(context)
+        val migratedOperators = mutableSetOf<String>()
+
+        subscriptions.forEach { subscription ->
+            val subId = subscription.subscriptionId
+            val operator = try {
+                context.getSystemService(TelephonyManager::class.java)
+                    ?.createForSubscriptionId(subId)
+                    ?.simOperator
+                    .orEmpty()
+            } catch (t: Throwable) {
+                Log.e("PHH", "Failed to get operator for stock IMS APN migration, subId=$subId", t)
+                return@forEach
+            }
+            if (operator.isEmpty() || !migratedOperators.add(operator)) return@forEach
+
+            val migrationKey = stockApnMigrationPrefix + operator
+            val hasLegacyApn = operator in legacyOperators
+            if (!hasLegacyApn && preferences.getBoolean(migrationKey, false)) return@forEach
+
+            val restoreUri = carriersUri.buildUpon()
+                .appendPath("restore")
+                .appendPath("subId")
+                .appendPath(subId.toString())
+                .build()
+            try {
+                val restored = cr.delete(restoreUri, null, null)
+                val legacyApnRemains = operator in queryLegacyImsOperators(context)
+                if (restored > 0 && !legacyApnRemains) {
+                    preferences.edit().putBoolean(migrationKey, true).apply()
+                    Log.i(
+                        "PHH",
+                        "Restored packaged APNs for stock MTK IMS, operator=$operator subId=$subId"
+                    )
+                } else {
+                    Log.w(
+                        "PHH",
+                        "Stock MTK IMS APN migration incomplete: operator=$operator " +
+                            "subId=$subId restored=$restored legacyApnRemains=$legacyApnRemains"
+                    )
+                }
+            } catch (t: Throwable) {
+                Log.e(
+                    "PHH",
+                    "Failed to restore packaged APNs for stock MTK IMS, " +
+                        "operator=$operator subId=$subId",
+                    t
+                )
+            }
+        }
+    }
+
+    private fun queryLegacyImsOperators(context: Context): Set<String> {
+        val operators = mutableSetOf<String>()
+        context.contentResolver.query(
+            carriersUri,
+            arrayOf("numeric"),
+            "name = ?",
+            arrayOf(imsApnName),
+            null
+        )?.use { cursor ->
+            val numericIndex = cursor.getColumnIndex("numeric")
+            while (cursor.moveToNext()) {
+                cursor.getString(numericIndex)?.takeIf { it.isNotEmpty() }?.let(operators::add)
+            }
+        }
+        return operators
+    }
+
+    private fun containsApnType(rawTypes: String, targetType: String): Boolean {
+        return rawTypes
+            .split(",")
+            .any { it.trim().equals(targetType, ignoreCase = true) }
+    }
+
     private fun finalizeImsSetup(context: Context, userInitiated: Boolean) {
         imsInstallInProgress = false
         val sp = PreferenceManager.getDefaultSharedPreferences(context)
@@ -280,9 +420,6 @@ object ImsSettings : Settings {
         Log.e("PHH", "IMS apk install failed: status=$status legacy=$legacyStatus msg=$message")
         scheduleFinalizeIfInstalled(appContext, userInitiated)
     }
-
-
-    override fun enabled() = true
 }
 
 class ImsInstallReceiver : BroadcastReceiver() {

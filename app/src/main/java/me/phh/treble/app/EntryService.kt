@@ -43,6 +43,10 @@ class EntryService : Service() {
                 }
             } catch (t: Throwable) {
                 Log.e("PHH", "Caught", t)
+            } finally {
+                // LOCKED_BOOT_COMPLETED may run before IMS installation can access
+                // credential-encrypted storage. Allow BOOT_COMPLETED/USER_UNLOCKED
+                // to retry initialization once the user is unlocked.
                 initStarted = false
             }
         }
@@ -58,6 +62,7 @@ class Starter : BroadcastReceiver() {
         }
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_USER_UNLOCKED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED -> {
                 context.startServiceAsUser(Intent(context, EntryService::class.java), UserHandle.SYSTEM)
